@@ -2,109 +2,202 @@ package handlers
 
 import (
 	"encoding/json"
-	"fmt"
+	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 
+	"github.com/MALblSH/Wishlist_API/internal/application/service"
 	"github.com/MALblSH/Wishlist_API/internal/infrastructure/dto"
 	"github.com/MALblSH/Wishlist_API/internal/infrastructure/httppkg/httputils"
+	"github.com/MALblSH/Wishlist_API/internal/infrastructure/logging"
 )
 
 type WishlistHandler struct {
+	svc service.WishlistService
 }
 
-func NewWishlistHandler() *WishlistHandler {
-	return &WishlistHandler{}
+func NewWishlistHandler(svc service.WishlistService) *WishlistHandler {
+	return &WishlistHandler{
+		svc: svc,
+	}
 }
 
 func (h *WishlistHandler) List(w http.ResponseWriter, r *http.Request) {
-	claims, ok := httputils.GetUserIDFromContext(r)
+	log := logging.FromContext(r.Context())
+	userID, ok := httputils.GetUserIDFromContext(r)
 	if !ok {
+		log.Warn("unauthorized access attempt to list wishlists")
 		httputils.WriteJSONError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	fmt.Printf("WishlistHandler.List claims: %s\n", claims)
+
+	resp, err := h.svc.List(r.Context(), userID)
+	if err != nil {
+		log.Warn("failed to get list wishlists",
+			slog.String("user_id", userID.String()),
+			slog.String("error", err.Error()),
+		)
+		httputils.MapError(w, err)
+		return
+	}
+
+	log.Info("wishlists received successfully",
+		slog.String("user_id", userID.String()),
+		slog.Int("wishlist_count", len(resp.WishLists)),
+	)
+
+	httputils.WriteJSON(w, http.StatusOK, resp)
 }
 
 func (h *WishlistHandler) Create(w http.ResponseWriter, r *http.Request) {
-	claims, ok := httputils.GetUserIDFromContext(r)
+	log := logging.FromContext(r.Context())
+	userID, ok := httputils.GetUserIDFromContext(r)
 	if !ok {
+		log.Warn("unauthorized access attempt to create wishlists")
 		httputils.WriteJSONError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 	var req dto.WishListRequest
 	err := json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
+		log.Warn("failed to decode wishlist create request body",
+			slog.String("error", err.Error()),
+		)
 		httputils.WriteJSONError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	fmt.Printf("WishlistHandler.Create claims: %s, title: %s, description: %s, event_date: %s\n",
-		claims, req.Title, req.Description, req.EventDate)
 
-	json.NewEncoder(w).Encode(map[string]string{
-		"message":    "Create wishlist called",
-		"claims":     claims,
-		"title":      req.Title,
-		"event_date": req.EventDate,
-	})
+	var resp dto.WishListResponse
+	resp, err = h.svc.Create(r.Context(), userID, req)
+	if err != nil {
+		log.Warn("failed to create wishlist",
+			slog.String("user_id", userID.String()),
+			slog.String("error", err.Error()),
+		)
+		httputils.MapError(w, err)
+		return
+	}
+
+	log.Info("wishlist created successfully",
+		slog.String("user_id", userID.String()),
+		slog.String("wishlist_id", resp.ID.String()),
+	)
+
+	httputils.WriteJSON(w, http.StatusOK, resp)
 }
 
 func (h *WishlistHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	claims, ok := httputils.GetUserIDFromContext(r)
+	log := logging.FromContext(r.Context())
+	userID, ok := httputils.GetUserIDFromContext(r)
 	if !ok {
+		log.Warn("unauthorized access attempt to delete wishlist")
 		httputils.WriteJSONError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	id := chi.URLParam(r, "id")
+	var wishlistID uuid.UUID
+	wishlistID, ok = httputils.ParseUUIDParam(w, r, "id")
+	if !ok {
+		log.Warn("invalid wishlist id in delete request")
+		return
+	}
+	err := h.svc.Delete(r.Context(), userID, wishlistID)
+	if err != nil {
+		log.Warn("failed to delete wishlist",
+			slog.String("user_id", userID.String()),
+			slog.String("wishlist_id", wishlistID.String()),
+			slog.String("error", err.Error()),
+		)
+		httputils.MapError(w, err)
+		return
+	}
 
-	fmt.Printf("WishlistHandler.Delete claims: %s, wishlist_id: %s\n", claims, id)
+	log.Info("wishlist deleted successfully")
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"message":     "Delete wishlist called",
-		"claims":      claims,
-		"wishlist_id": id,
+	httputils.WriteJSON(w, http.StatusOK, map[string]string{
+		"message": "wishlist deleted successfully",
 	})
 }
 
 func (h *WishlistHandler) Update(w http.ResponseWriter, r *http.Request) {
-	claims, ok := httputils.GetUserIDFromContext(r)
+	log := logging.FromContext(r.Context())
+	userID, ok := httputils.GetUserIDFromContext(r)
 	if !ok {
+		log.Warn("unauthorized access attempt to update wishlist")
 		httputils.WriteJSONError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	id := chi.URLParam(r, "id")
+	var wishlistID uuid.UUID
+	wishlistID, ok = httputils.ParseUUIDParam(w, r, "id")
+	if !ok {
+		log.Warn("invalid wishlist id in update request")
+		return
+	}
+
 	var req dto.WishListUpdateRequest
 	err := json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
+		log.Warn("failed to decode wishlist update request body",
+			slog.String("error", err.Error()),
+		)
 		httputils.WriteJSONError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	fmt.Printf("WishlistHandler.Update claims: %s, wishlist_id: %s, title: %s, description: %s, event_date: %s\n",
-		claims, id, req.Title, req.Description, req.EventDate)
 
-	json.NewEncoder(w).Encode(map[string]string{
-		"message":     "Update wishlist called",
-		"claims":      claims,
-		"wishlist_id": id,
-	})
+	var resp dto.WishListResponse
+	resp, err = h.svc.Update(r.Context(), userID, wishlistID, req)
+	if err != nil {
+		log.Warn("failed to update wishlist",
+			slog.String("user_id", userID.String()),
+			slog.String("wishlist_id", wishlistID.String()),
+			slog.String("error", err.Error()),
+		)
+		httputils.MapError(w, err)
+		return
+	}
+
+	log.Info("wishlist updated successfully",
+		slog.String("user_id", userID.String()),
+		slog.String("wishlist_id", wishlistID.String()),
+	)
+
+	httputils.WriteJSON(w, http.StatusOK, resp)
 }
 
 func (h *WishlistHandler) Get(w http.ResponseWriter, r *http.Request) {
-	claims, ok := httputils.GetUserIDFromContext(r)
+	log := logging.FromContext(r.Context())
+	userID, ok := httputils.GetUserIDFromContext(r)
 	if !ok {
+		log.Warn("unauthorized access attempt to get wishlist")
 		httputils.WriteJSONError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	id := chi.URLParam(r, "id")
+	wishlistID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		log.Warn("invalid wishlist id in get request",
+			slog.String("error", err.Error()),
+		)
+		httputils.WriteJSONError(w, http.StatusBadRequest, "invalid wishlist id")
+		return
+	}
 
-	fmt.Printf("WishlistHandler.Get claims: %s, wishlist_id: %s\n", claims, id)
+	var resp dto.WishListResponse
+	resp, err = h.svc.Get(r.Context(), userID, wishlistID)
+	if err != nil {
+		log.Warn("failed to get wishlist",
+			slog.String("user_id", userID.String()),
+			slog.String("wishlist_id", wishlistID.String()),
+			slog.String("error", err.Error()),
+		)
+		httputils.MapError(w, err)
+		return
+	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"message":     "Get wishlist called",
-		"claims":      claims,
-		"wishlist_id": id,
-	})
+	log.Info("wishlist returned successfully",
+		slog.String("user_id", userID.String()),
+		slog.String("wishlist_id", wishlistID.String()),
+	)
+
+	httputils.WriteJSON(w, http.StatusOK, resp)
 }

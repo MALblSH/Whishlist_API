@@ -10,11 +10,20 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/MALblSH/Wishlist_API/internal/application/service"
+	"github.com/MALblSH/Wishlist_API/internal/infrastructure/config"
+	"github.com/MALblSH/Wishlist_API/internal/infrastructure/httppkg/handlers"
 	"github.com/MALblSH/Wishlist_API/internal/infrastructure/httppkg/router"
 	"github.com/MALblSH/Wishlist_API/internal/infrastructure/logging"
+	"github.com/MALblSH/Wishlist_API/internal/infrastructure/ormrepository"
+	"github.com/MALblSH/Wishlist_API/internal/infrastructure/postgres"
+	"github.com/MALblSH/Wishlist_API/internal/infrastructure/tokens/access"
 )
 
 const (
+	AccessTokenTTL  = time.Hour * 24
 	shutdownTimeout = 5 * time.Second
 )
 
@@ -25,7 +34,35 @@ func RunWishlist() error {
 
 	ctx = logging.With(ctx, log)
 
-	rtr := router.RegisterRoutes()
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+
+	var pool *pgxpool.Pool
+	pool, err = postgres.NewPool(ctx, cfg)
+	if err != nil {
+		return fmt.Errorf("create pool: %w", err)
+	}
+
+	defer pool.Close()
+
+	itemRepo := ormrepository.NewItemRepository(pool)
+	wishlistRepo := ormrepository.NewWishlistRepository(pool)
+	userRepo := ormrepository.NewUserRepository(pool)
+
+	jwtManager := access.NewManager(cfg.AccessTokenSecret, AccessTokenTTL)
+
+	itemService := service.NewItemService(itemRepo, wishlistRepo)
+	wishlistService := service.NewWishlistService(wishlistRepo, itemRepo)
+	authService := service.NewAuthService(userRepo, jwtManager)
+
+	itemHandler := handlers.NewItemHandler(itemService)
+	wishlistHandler := handlers.NewWishlistHandler(wishlistService)
+	authHandler := handlers.NewAuthHandler(authService)
+	publicHandler := handlers.NewPublicHandler(wishlistService, itemService)
+
+	rtr := router.RegisterRoutes(authHandler, wishlistHandler, itemHandler, publicHandler, jwtManager)
 
 	httpServer := &http.Server{
 		Addr:    ":8080",
@@ -50,7 +87,7 @@ func RunWishlist() error {
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
-	err := httpServer.Shutdown(shutdownCtx)
+	err = httpServer.Shutdown(shutdownCtx)
 	if err != nil {
 		log.Error(
 			"failed to shutdown HTTP server",

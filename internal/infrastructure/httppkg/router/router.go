@@ -6,15 +6,17 @@ import (
 
 	"github.com/MALblSH/Wishlist_API/internal/infrastructure/httppkg/handlers"
 	authmiddleware "github.com/MALblSH/Wishlist_API/internal/infrastructure/httppkg/middleware"
+	"github.com/MALblSH/Wishlist_API/internal/infrastructure/tokens/access"
 )
 
-func RegisterRoutes() *chi.Mux {
-	authHandler := handlers.NewAuthHandler()
-	wishlistHandler := handlers.NewWishlistHandler()
-	itemHandler := handlers.NewItemHandler()
-	publicHandler := handlers.NewPublicHandler()
+func RegisterRoutes(
+	authHandler *handlers.AuthHandler,
+	wishlistHandler *handlers.WishlistHandler,
+	itemHandler *handlers.ItemHandler,
+	publicHandler *handlers.PublicHandler,
+	jwtManager *access.Manager,
+) *chi.Mux {
 	r := chi.NewRouter()
-	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 
 	r.Route("/auth", func(r chi.Router) {
@@ -23,7 +25,7 @@ func RegisterRoutes() *chi.Mux {
 	})
 
 	r.Route("/wishlist", func(r chi.Router) {
-		r.Use(authmiddleware.AuthMiddleWare)
+		r.Use(authmiddleware.AuthMiddleWare(jwtManager))
 		r.Get("/", wishlistHandler.List)
 		r.Post("/", wishlistHandler.Create)
 		r.Put("/{id}", wishlistHandler.Update)
